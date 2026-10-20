@@ -231,7 +231,7 @@ const pt = (deg, r) => { const a = (deg - 90) * Math.PI / 180; return [CX + r * 
     if (major) { const [tx,ty] = pt(c*DEG, 96); s += `<text x="${tx.toFixed(1)}" y="${(ty+4).toFixed(1)}">${c > 0 ? '+' + c : c}</text>`; }
   }
   $('#ticks').innerHTML = s;
-  const [zx1,zy1] = pt(-5*DEG, 124), [zx2,zy2] = pt(5*DEG, 124);
+  const [zx1,zy1] = pt(-2.5*DEG, 124), [zx2,zy2] = pt(2.5*DEG, 124);
   $('#zone').setAttribute('d', `M${zx1.toFixed(1)} ${zy1.toFixed(1)} A124 124 0 0 1 ${zx2.toFixed(1)} ${zy2.toFixed(1)}`);
 })();
 
@@ -276,7 +276,7 @@ function refresh(){
     lastMidi = 69;
   }
   showNote(lastMidi);
-  hist.length = 0; resetReading();
+  tracker && tracker.reset(); resetReading();
 }
 
 $('#tuningSel').addEventListener('change', e => { tIdx[mode] = +e.target.value; saveSets(); refresh(); });
@@ -290,7 +290,7 @@ function showNote(m){
 }
 function resetReading(){
   $('#cents').textContent = '0'; $('#hz').textContent = '–';
-  goalCents = 0; okSince = 0;
+  goalCents = 0; okSince = 0; inTune = false;
   $('#meter').className = 'meter idle';
 }
 
@@ -333,10 +333,36 @@ function yin(b, sr, d, fMin){
 }
 // YIN-END
 
+/* ---------- 음 추적: 소리가 소음보다 크면 매 프레임 계속 분석 ---------- */
+// TRACK-START
+function makeTracker({ sr, N }){
+  const d = new Float32Array(N), hist = [];
+  let floor = 0.0003;
+  return {
+    reset(){ hist.length = 0; },
+    push(b, fMin){
+      let rms = 0; for (let i = N >> 1; i < N; i++) rms += b[i] * b[i];
+      rms = Math.sqrt(rms / (N >> 1));
+      if (rms < 0.0003) return null;
+      const r = yin(b, sr, d, fMin);
+      // 방 소음 크기: 음이 안 잡히는 순간에만 배운다 (울리는 기타 소리는 소음으로 치지 않음)
+      if (!r) { floor += (rms - floor) * 0.05; return null; }
+      if (rms < floor) floor = rms;
+      if (rms < floor * 1.5) return null;
+      if (hist.length && Math.abs(Math.log2(r.f / hist[hist.length - 1])) > 0.05) hist.length = 0;
+      hist.push(r.f); if (hist.length > 5) hist.shift();
+      if (hist.length < 3) return null;
+      const s = [...hist].sort((x, y) => x - y);
+      return s[s.length >> 1];
+    },
+  };
+}
+// TRACK-END
+
 /* ---------- 오디오 ---------- */
-let ctx, an, buf, dbuf, stream, raf, lock, running = false, frame = 0;
-const hist = [];
-let lastHeard = 0, goalCents = 0, needle = 0, okSince = 0, lastMidi = 40;
+let ctx, an, buf, stream, raf, lock, running = false;
+let tracker = null;
+let lastHeard = 0, goalCents = 0, needle = 0, okSince = 0, inTune = false, lastMidi = 40;
 
 function setStatus(text, cls){ const s = $('#status'); s.textContent = text; s.className = 'status' + (cls ? ' ' + cls : ''); }
 
@@ -355,7 +381,8 @@ async function start(){
   const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1500;
   an = ctx.createAnalyser(); an.fftSize = 8192; an.smoothingTimeConstant = 0;
   src.connect(lp); lp.connect(an);
-  buf = new Float32Array(an.fftSize); dbuf = new Float32Array(an.fftSize);
+  buf = new Float32Array(an.fftSize);
+  tracker = makeTracker({ sr: ctx.sampleRate, N: an.fftSize });
   running = true;
   $('#start').textContent = '마이크 끄기'; $('#start').classList.add('on');
   setStatus(cur().strings ? '줄을 하나 튕겨 주세요' : '소리를 내 주세요');
@@ -368,7 +395,7 @@ function stop(){
   stream && stream.getTracks().forEach(t => t.stop());
   ctx && ctx.close();
   try { lock && lock.release(); } catch {}
-  lock = null; hist.length = 0;
+  lock = null; tracker && tracker.reset();
   $('#start').textContent = '마이크 켜기'; $('#start').classList.remove('on');
   $('#strings').querySelectorAll('.hit').forEach(x => x.classList.remove('hit'));
   resetReading();
@@ -383,20 +410,12 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && running) { wake(); ctx && ctx.resume(); }
 });
 
-const median = a => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
-
 function analyze(){
   an.getFloatTimeDomainData(buf);
-  let rms = 0; for (let i = buf.length >> 1; i < buf.length; i++) rms += buf[i] * buf[i];
-  rms = Math.sqrt(rms / (buf.length >> 1));
-  if (rms < 0.006) return;
-  const r = yin(buf, ctx.sampleRate, dbuf, cur().fMin);
-  if (!r) return;
-  if (hist.length && Math.abs(Math.log2(r.f / hist[hist.length - 1])) > 0.05) hist.length = 0;
-  hist.push(r.f); if (hist.length > 7) hist.shift();
-  if (hist.length < 3) return;
+  const f = tracker.push(buf, cur().fMin);
+  if (f == null) return;
   lastHeard = performance.now();
-  update(median(hist));
+  update(f);
 }
 
 function update(f){
@@ -419,7 +438,9 @@ function update(f){
   $('#strings').querySelectorAll('.chip').forEach(c => c.classList.toggle('hit', +c.dataset.i === idx));
   goalCents = cents;
   const now = performance.now();
-  if (Math.abs(cents) < 3) {
+  // ±2센트(반올림해서 2까지)면 맞음. 3센트를 넘어야 풀려서 깜빡이지 않는다
+  inTune = inTune ? Math.abs(cents) <= 3 : Math.abs(cents) <= 2.5;
+  if (inTune) {
     if (!okSince) okSince = now;
     setStatus('맞았어요', 'ok');
   } else {
@@ -428,7 +449,7 @@ function update(f){
     const how = M.strings ? (cents < 0 ? ' · 줄을 조이세요' : ' · 줄을 푸세요') : '';
     setStatus(`${far}${cents < 0 ? '낮아요' : '높아요'}${how}`, cents < 0 ? 'low' : 'high');
   }
-  const held = okSince && now - okSince > 250;
+  const held = okSince && now - okSince > 120;
   $('#meter').className = 'meter' + (held ? ' ok' : '');
   // 400ms 넘게 맞으면 그 줄에 완료 표시
   if (idx >= 0 && okSince && now - okSince > 400) $('#strings').querySelector(`[data-i="${idx}"]`).classList.add('done');
@@ -441,9 +462,9 @@ function setNeedle(c){
 
 function loop(){
   if (!running) return;
-  if ((frame++ & 1) === 0) analyze();
+  analyze();
   if (lastHeard && performance.now() - lastHeard > 1200) {
-    $('#meter').className = 'meter idle'; okSince = 0; goalCents = 0; hist.length = 0;
+    $('#meter').className = 'meter idle'; okSince = 0; inTune = false; goalCents = 0; tracker.reset();
     $('#strings').querySelectorAll('.hit').forEach(x => x.classList.remove('hit'));
     setStatus(cur().strings ? '줄을 하나 튕겨 주세요' : '소리를 내 주세요'); lastHeard = 0;
   }
