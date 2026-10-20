@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="튜너">
+<title>튜너</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;600&display=swap">
+<style>
+/* 레이아웃: 한 화면 계기판 — 위 악기 선택, 바늘 미터와 음 이름, 아래 줄 표시와 마이크 버튼 */
+:root{
+  --bg:#13151a; --panel:#1b1e25; --line:#2c313b; --fg:#ebe8e2; --dim:#8a8f99;
+  --accent:#f0ad3a; --ok:#5ed38c; --warn:#ee6a59;
+  --f-note:"Big Shoulders Display","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans KR",-apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#eceef1; --panel:#ffffff; --line:#d5d9e0; --fg:#1a1c21; --dim:#5d626c;
+    --accent:#b5730a; --ok:#1d9a52; --warn:#c63f2d; color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#eceef1; --panel:#ffffff; --line:#d5d9e0; --fg:#1a1c21; --dim:#5d626c;
+  --accent:#b5730a; --ok:#1d9a52; --warn:#c63f2d; color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg); color:var(--fg); font:15px/1.5 var(--f-body);
+  -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none;
+}
+.wrap{
+  min-height:100%; max-width:520px; margin:0 auto; display:flex; flex-direction:column; gap:16px;
+  padding-block:max(16px, env(safe-area-inset-top,0px)) max(20px, env(safe-area-inset-bottom,0px));
+  padding-left:max(16px, env(safe-area-inset-left,0px));
+  padding-right:max(16px, env(safe-area-inset-right,0px));
+}
+
+.modes{display:grid; grid-template-columns:repeat(4,1fr); background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:4px; gap:4px}
+.modes button{
+  appearance:none; border:0; background:none; color:var(--dim); border-radius:10px; padding:10px 0;
+  font:600 14px/1 var(--f-body); cursor:pointer; min-width:0;
+}
+.modes button[aria-pressed="true"]{background:var(--accent); color:var(--bg)}
+
+.meter{
+  background:var(--panel); border:1px solid var(--line); border-radius:18px;
+  padding:12px 12px 18px; display:flex; flex-direction:column; align-items:center; gap:4px;
+  transition:border-color .25s;
+}
+.tuning{font:500 12px/1 var(--f-num); color:var(--dim); letter-spacing:.08em; align-self:flex-start; padding-left:4px}
+.meter svg{width:100%; max-width:420px; height:auto; display:block}
+#ticks line{stroke:var(--dim); stroke-width:1.5; stroke-linecap:round}
+#ticks line.maj{stroke:var(--fg); stroke-width:2.5}
+#ticks text{fill:var(--dim); font:500 11px var(--f-num); text-anchor:middle}
+#zone{fill:none; stroke:var(--ok); stroke-width:8; opacity:.35; stroke-linecap:round}
+#needle{stroke:var(--accent); stroke-width:3.5; stroke-linecap:round; transition:stroke .2s}
+#pivot{fill:var(--accent); transition:fill .2s}
+.meter.ok{border-color:var(--ok)}
+.meter.ok #needle{stroke:var(--ok)} .meter.ok #pivot{fill:var(--ok)} .meter.ok #zone{opacity:.9}
+
+.note{font:800 clamp(88px,30vw,140px)/.9 var(--f-note); letter-spacing:.01em; margin-top:-6px; transition:color .2s, opacity .3s; white-space:nowrap}
+.note sub{font:600 .3em var(--f-note); color:var(--dim); vertical-align:baseline; margin-left:2px}
+.meter.ok .note{color:var(--ok)}
+.meter.idle .note,.meter.idle .reading{opacity:.35}
+.reading{display:flex; flex-wrap:wrap; justify-content:center; gap:4px 16px; font:500 14px/1.2 var(--f-num); color:var(--dim); font-variant-numeric:tabular-nums; transition:opacity .3s}
+.reading b{color:var(--fg); font-weight:500}
+
+.status{min-height:1.5em; text-align:center; margin:0; font-weight:600; font-size:17px}
+.status.low,.status.high{color:var(--accent)} .status.ok{color:var(--ok)} .status.warn{color:var(--warn); font-weight:400; font-size:15px}
+
+.strings{display:flex; gap:6px; min-height:58px}
+.strings[hidden]{display:none!important}
+.chip{
+  flex:1; min-width:0; border:1px solid var(--line); background:var(--panel); color:var(--fg);
+  border-radius:12px; padding:9px 0 8px; display:flex; flex-direction:column; align-items:center; gap:3px;
+  font:600 20px/1 var(--f-note); transition:background .15s, color .15s, border-color .15s;
+}
+.chip small{font:400 10px/1 var(--f-body); color:var(--dim); letter-spacing:.04em}
+.chip.hit{background:var(--accent); color:var(--bg); border-color:var(--accent)}
+.chip.hit small{color:var(--bg)}
+.chip.done{border-color:var(--ok)}
+.chip.done small{color:var(--ok)}
+.chip.hit.done{background:var(--ok); border-color:var(--ok)}
+.chip.hit.done small{color:var(--bg)}
+
+.controls{display:flex; gap:10px; align-items:stretch}
+#start{
+  flex:1; appearance:none; border:0; border-radius:14px; padding:16px; cursor:pointer;
+  background:var(--accent); color:var(--bg); font:600 17px/1 var(--f-body);
+}
+#start.on{background:var(--panel); color:var(--fg); border:1px solid var(--line)}
+.cal{display:flex; align-items:center; border:1px solid var(--line); border-radius:14px; background:var(--panel)}
+.cal button{appearance:none; border:0; background:none; color:var(--fg); font:500 22px/1 var(--f-num); width:44px; height:100%; cursor:pointer}
+.cal span{font:500 13px/1.2 var(--f-num); text-align:center; min-width:58px; font-variant-numeric:tabular-nums}
+.cal span small{display:block; font:400 10px var(--f-body); color:var(--dim)}
+button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+.foot{margin:auto 0 0; font-size:12px; color:var(--dim); text-align:center}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="modes" id="modes" role="group" aria-label="악기"></div>
+
+  <section class="meter idle" id="meter" aria-live="polite">
+    <div class="tuning" id="tuning">E A D G B E</div>
+    <svg viewBox="0 0 300 172" aria-hidden="true">
+      <path id="zone"></path>
+      <g id="ticks"></g>
+      <line id="needle" x1="150" y1="160" x2="150" y2="36" transform="rotate(0 150 160)"></line>
+      <circle id="pivot" cx="150" cy="160" r="7"></circle>
+    </svg>
+    <div class="note" id="note">E<sub>2</sub></div>
+    <div class="reading">
+      <span><b id="cents">0</b> ¢</span>
+      <span><b id="hz">–</b> Hz</span>
+      <span>목표 <b id="goal">82.4</b></span>
+    </div>
+  </section>
+
+  <p class="status" id="status">아래 버튼을 눌러 마이크를 켜세요</p>
+
+  <div class="strings" id="strings" aria-label="줄"></div>
+
+  <div class="controls">
+    <button id="start" type="button">마이크 켜기</button>
+    <div class="cal" role="group" aria-label="기준음">
+      <button id="calDown" type="button" aria-label="기준음 내리기">−</button>
+      <span><span id="a4">440</span><small>A4 Hz</small></span>
+      <button id="calUp" type="button" aria-label="기준음 올리기">+</button>
+    </div>
+  </div>
+
+  <p class="foot" id="foot">한 줄씩 튕기면 몇 번 줄인지 알아서 찾아요.</p>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const NAMES = ['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'];
+const noteName = m => NAMES[((m % 12) + 12) % 12];
+const octave = m => Math.floor(m / 12) - 1;
+
+// 줄 목록은 화면 왼쪽부터 (번호가 큰 줄부터). fMin = 찾을 가장 낮은 주파수
+const MODES = {
+  guitar: { label:'기타',    strings:[40,45,50,55,59,64], fMin:65, tuning:'E A D G B E' },
+  bass:   { label:'베이스',  strings:[28,33,38,43],       fMin:36, tuning:'E A D G' },
+  uke:    { label:'우쿨렐레', strings:[67,60,64,69],       fMin:200, tuning:'G C E A' },
+  chrom:  { label:'크로매틱', strings:null,                fMin:36, tuning:'모든 음' },
+};
+
+let a4 = 440, mode = 'guitar';
+try {
+  const v = +localStorage.getItem('tuner.a4'); if (v >= 430 && v <= 450) a4 = v;
+  const m = localStorage.getItem('tuner.mode'); if (MODES[m]) mode = m;
+} catch {}
+const hzOf = m => a4 * Math.pow(2, (m - 69) / 12);
+
+/* ---------- 미터 그리기 ---------- */
+const CX = 150, CY = 160, DEG = 1.2; // 1센트 = 1.2도, ±50센트 = ±60도
+const pt = (deg, r) => { const a = (deg - 90) * Math.PI / 180; return [CX + r * Math.cos(a), CY + r * Math.sin(a)]; };
+(function drawMeter(){
+  let s = '';
+  for (let c = -50; c <= 50; c += 5) {
+    const major = c % 25 === 0;
+    const [x1,y1] = pt(c*DEG, major ? 110 : 118), [x2,y2] = pt(c*DEG, 130);
+    s += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"${major ? ' class="maj"' : ''}></line>`;
+    if (major) { const [tx,ty] = pt(c*DEG, 96); s += `<text x="${tx.toFixed(1)}" y="${(ty+4).toFixed(1)}">${c > 0 ? '+' + c : c}</text>`; }
+  }
+  $('#ticks').innerHTML = s;
+  const [zx1,zy1] = pt(-5*DEG, 124), [zx2,zy2] = pt(5*DEG, 124);
+  $('#zone').setAttribute('d', `M${zx1.toFixed(1)} ${zy1.toFixed(1)} A124 124 0 0 1 ${zx2.toFixed(1)} ${zy2.toFixed(1)}`);
+})();
+
+/* ---------- 악기 선택 ---------- */
+$('#modes').innerHTML = Object.entries(MODES)
+  .map(([k, v]) => `<button type="button" data-m="${k}" aria-pressed="false">${v.label}</button>`).join('');
+$('#modes').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (b) setMode(b.dataset.m);
+});
+
+function setMode(m){
+  mode = m;
+  try { localStorage.setItem('tuner.mode', m); } catch {}
+  const M = MODES[m];
+  $('#modes').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === m));
+  $('#tuning').textContent = M.tuning;
+  const box = $('#strings');
+  if (M.strings) {
+    const n = M.strings.length;
+    box.innerHTML = M.strings.map((s, i) => `<div class="chip" data-i="${i}">${noteName(s)}<small>${n - i}번 줄</small></div>`).join('');
+    box.hidden = false;
+    $('#foot').textContent = '한 줄씩 튕기면 몇 번 줄인지 알아서 찾아요.';
+    showNote(M.strings[0]);
+  } else {
+    box.innerHTML = ''; box.hidden = true;
+    $('#foot').textContent = '어떤 음이든 가장 가까운 반음에 맞춰 보여줘요.';
+    showNote(69);
+  }
+  hist.length = 0; resetReading();
+}
+
+function showNote(m){
+  $('#note').innerHTML = `${noteName(m)}<sub>${octave(m)}</sub>`;
+  $('#goal').textContent = hzOf(m).toFixed(1);
+}
+function resetReading(){
+  $('#cents').textContent = '0'; $('#hz').textContent = '–';
+  goalCents = 0; okSince = 0;
+  $('#meter').className = 'meter idle';
+}
+
+/* ---------- 기준음 ---------- */
+function setA4(v){
+  a4 = Math.min(450, Math.max(430, v));
+  $('#a4').textContent = a4;
+  try { localStorage.setItem('tuner.a4', a4); } catch {}
+  showNote(lastMidi);
+}
+$('#calDown').onclick = () => setA4(a4 - 1);
+$('#calUp').onclick = () => setA4(a4 + 1);
+$('#a4').textContent = a4;
+
+/* ---------- 음높이 찾기 (YIN) ---------- */
+// YIN-START
+// 버퍼 끝부분(가장 최근 소리)만 써서 반응을 빠르게 한다
+function yin(b, sr, d, fMin){
+  const tMax = Math.floor(sr / fMin);
+  const W = Math.min(b.length - tMax - 1, Math.max(1024, tMax * 2));
+  const o = b.length - W - tMax - 1;
+  const tMin = Math.floor(sr / 1400);
+  d[0] = 1; let run = 0;
+  for (let t = 1; t <= tMax; t++) {
+    let s = 0;
+    for (let i = o; i < o + W; i++) { const x = b[i] - b[i + t]; s += x * x; }
+    run += s; d[t] = run ? s * t / run : 1;
+  }
+  let t = tMin;
+  for (; t <= tMax; t++) {
+    if (d[t] < 0.15) { while (t + 1 <= tMax && d[t + 1] < d[t]) t++; break; }
+  }
+  if (t > tMax) return null;
+  let bt = t;
+  if (t > 1 && t < tMax) {
+    const a = d[t - 1], c = d[t + 1], m = d[t], den = a + c - 2 * m;
+    if (den) bt = t + (a - c) / (2 * den);
+  }
+  return { f: sr / bt, p: 1 - d[t] };
+}
+// YIN-END
+
+/* ---------- 오디오 ---------- */
+let ctx, an, buf, dbuf, stream, raf, lock, running = false, frame = 0;
+const hist = [];
+let lastHeard = 0, goalCents = 0, needle = 0, okSince = 0, lastMidi = 40;
+
+function setStatus(text, cls){ const s = $('#status'); s.textContent = text; s.className = 'status' + (cls ? ' ' + cls : ''); }
+
+async function start(){
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('마이크를 쓰려면 https:// 로 시작하는 주소에서 열어야 해요.', 'warn'); return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+  } catch (e) {
+    setStatus('마이크 권한이 꺼져 있어요. 설정 → 앱 → Safari → 마이크에서 허용해 주세요.', 'warn'); return;
+  }
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+  const src = ctx.createMediaStreamSource(stream);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1500;
+  an = ctx.createAnalyser(); an.fftSize = 8192; an.smoothingTimeConstant = 0;
+  src.connect(lp); lp.connect(an);
+  buf = new Float32Array(an.fftSize); dbuf = new Float32Array(an.fftSize);
+  running = true;
+  $('#start').textContent = '마이크 끄기'; $('#start').classList.add('on');
+  setStatus(MODES[mode].strings ? '줄을 하나 튕겨 주세요' : '소리를 내 주세요');
+  wake();
+  loop();
+}
+
+function stop(){
+  running = false; cancelAnimationFrame(raf);
+  stream && stream.getTracks().forEach(t => t.stop());
+  ctx && ctx.close();
+  try { lock && lock.release(); } catch {}
+  lock = null; hist.length = 0;
+  $('#start').textContent = '마이크 켜기'; $('#start').classList.remove('on');
+  $('#strings').querySelectorAll('.hit').forEach(x => x.classList.remove('hit'));
+  resetReading();
+  setStatus('아래 버튼을 눌러 마이크를 켜세요');
+  needle = 0; setNeedle(0);
+}
+
+$('#start').onclick = () => running ? stop() : start();
+
+async function wake(){ try { if ('wakeLock' in navigator) lock = await navigator.wakeLock.request('screen'); } catch {} }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && running) { wake(); ctx && ctx.resume(); }
+});
+
+const median = a => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
+
+function analyze(){
+  an.getFloatTimeDomainData(buf);
+  let rms = 0; for (let i = buf.length >> 1; i < buf.length; i++) rms += buf[i] * buf[i];
+  rms = Math.sqrt(rms / (buf.length >> 1));
+  if (rms < 0.006) return;
+  const r = yin(buf, ctx.sampleRate, dbuf, MODES[mode].fMin);
+  if (!r) return;
+  if (hist.length && Math.abs(Math.log2(r.f / hist[hist.length - 1])) > 0.05) hist.length = 0;
+  hist.push(r.f); if (hist.length > 7) hist.shift();
+  if (hist.length < 3) return;
+  lastHeard = performance.now();
+  update(median(hist));
+}
+
+function update(f){
+  const M = MODES[mode];
+  const mf = 69 + 12 * Math.log2(f / a4);
+  let m, idx = -1;
+  if (M.strings) {
+    // 가장 가까운 줄을 찾아 그 줄의 목표음에 맞춘다
+    idx = 0;
+    M.strings.forEach((s, i) => { if (Math.abs(s - mf) < Math.abs(M.strings[idx] - mf)) idx = i; });
+    m = M.strings[idx];
+  } else {
+    m = Math.round(mf);
+  }
+  const cents = (mf - m) * 100;
+  lastMidi = m;
+  showNote(m);
+  $('#cents').textContent = (cents > 0 ? '+' : '') + Math.round(cents);
+  $('#hz').textContent = f.toFixed(1);
+  $('#strings').querySelectorAll('.chip').forEach(c => c.classList.toggle('hit', +c.dataset.i === idx));
+  goalCents = cents;
+  const now = performance.now();
+  if (Math.abs(cents) < 3) {
+    if (!okSince) okSince = now;
+    setStatus('맞았어요', 'ok');
+  } else {
+    okSince = 0;
+    const far = Math.abs(cents) > 50 ? '한참 ' : '';
+    const how = M.strings ? (cents < 0 ? ' · 줄을 조이세요' : ' · 줄을 푸세요') : '';
+    setStatus(`${far}${cents < 0 ? '낮아요' : '높아요'}${how}`, cents < 0 ? 'low' : 'high');
+  }
+  const held = okSince && now - okSince > 250;
+  $('#meter').className = 'meter' + (held ? ' ok' : '');
+  // 400ms 넘게 맞으면 그 줄에 완료 표시
+  if (idx >= 0 && okSince && now - okSince > 400) $('#strings').querySelector(`[data-i="${idx}"]`).classList.add('done');
+}
+
+function setNeedle(c){
+  const deg = Math.max(-50, Math.min(50, c)) * DEG;
+  $('#needle').setAttribute('transform', `rotate(${deg.toFixed(2)} ${CX} ${CY})`);
+}
+
+function loop(){
+  if (!running) return;
+  if ((frame++ & 1) === 0) analyze();
+  if (lastHeard && performance.now() - lastHeard > 1200) {
+    $('#meter').className = 'meter idle'; okSince = 0; goalCents = 0; hist.length = 0;
+    $('#strings').querySelectorAll('.hit').forEach(x => x.classList.remove('hit'));
+    setStatus(MODES[mode].strings ? '줄을 하나 튕겨 주세요' : '소리를 내 주세요'); lastHeard = 0;
+  }
+  needle += (goalCents - needle) * 0.22;
+  setNeedle(needle);
+  raf = requestAnimationFrame(loop);
+}
+
+setMode(mode);
+</script>
+</body>
+</html>
